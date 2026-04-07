@@ -4,10 +4,12 @@ from .schemas import UserCreateModel, UserModel, UserModel, UserLoginModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 from .service import AuthService
 from fastapi.exceptions import HTTPException
-from .utils import create_access_token, decode_token, verify_password
-from datetime import timedelta
+from .utils import create_access_token, verify_password
+from datetime import timedelta, datetime
 from src.config import Config
 from fastapi.responses import JSONResponse
+from .dependencies import AccessTokenBearer, RefreshTokenBearer
+from src.db.redis import add_token_to_blocklist
 
 
 auth_router = APIRouter()
@@ -48,3 +50,25 @@ async def login(user_data: UserLoginModel, session: AsyncSession = Depends(get_s
                 }
             )   
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid email or password")
+
+@auth_router.get("/refresh_token")
+async def create_access_token_from_refresh_token(token_data: dict = Depends(RefreshTokenBearer())):
+   expiry_timestamp = token_data['exp']
+   if expiry_timestamp > datetime.now().timestamp():
+        new_access_token = create_access_token(
+            data=token_data['user']
+        )
+        return JSONResponse(
+            content={
+                "access_token": new_access_token,
+                "token_type": "bearer"
+            }
+        )
+   raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Refresh token has expired")
+
+
+@auth_router.get("/logout", status_code=status.HTTP_200_OK)
+async def logout(token_data: dict = Depends(AccessTokenBearer())):
+    jti = token_data["jti"]
+    await add_token_to_blocklist(jti)
+    return JSONResponse(content={"message": "Logout successful"})
